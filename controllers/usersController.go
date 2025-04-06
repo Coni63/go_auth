@@ -16,13 +16,12 @@ import (
 
 	"go_auth/config"
 	"go_auth/initializers"
+	"go_auth/middlewares"
 	"go_auth/models"
 	"go_auth/serializers"
 )
 
 func GetAllUsers(c *gin.Context) {
-	initializers.OpsProcessed.Inc() // Increment the counter for each request
-
 	// First, query the actual User models from the database
 	var users []models.User
 	if err := initializers.DB.Find(&users).Error; err != nil {
@@ -31,7 +30,7 @@ func GetAllUsers(c *gin.Context) {
 	}
 
 	// Then convert to public view
-	var publicUsers []serializers.UserPublicView
+	publicUsers := []serializers.UserPublicView{}
 	for _, user := range users {
 		publicUsers = append(publicUsers, user.ToPublicView())
 	}
@@ -40,8 +39,6 @@ func GetAllUsers(c *gin.Context) {
 }
 
 func GetUser(c *gin.Context) {
-	initializers.OpsProcessed.Inc() // Increment the counter for each request
-
 	id := c.Param("id")
 
 	// Check if it's a valid UUID
@@ -65,9 +62,8 @@ func GetUser(c *gin.Context) {
 }
 
 func PutUser(c *gin.Context) {
-	initializers.OpsProcessed.Inc() // Increment the counter for each request
 	id := c.Param("id")
-	currentUser := c.MustGet("user").(models.User)
+	currentUser := c.MustGet("user").(*models.User)
 	// Check if it's a valid UUID
 	userUuid, err := uuid.Parse(id)
 	if err != nil {
@@ -103,16 +99,17 @@ func PutUser(c *gin.Context) {
 		return
 	}
 
+	token := middlewares.GetTokenFromHeader(c) // the token is already validated in the middleware
+	middlewares.InvalidateUserCache(token)
+
 	// Convert to private view
 	privateView := currentUser.ToPrivateView()
-	c.JSON(http.StatusOK, privateView)
+	c.JSON(http.StatusNoContent, privateView)
 }
 
 func PatchUser(c *gin.Context) {
-	initializers.OpsProcessed.Inc() // Increment the counter for each request
-
 	id := c.Param("id")
-	currentUser := c.MustGet("user").(models.User)
+	currentUser := c.MustGet("user").(*models.User)
 
 	// Check if it's a valid UUID
 	userUuid, err := uuid.Parse(id)
@@ -155,23 +152,18 @@ func PatchUser(c *gin.Context) {
 		return
 	}
 
-	// Fetch the updated user from the database
-	// if err := initializers.DB.First(&currentUser, "id = ?", userUuid).Error; err != nil {
-	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve updated user"})
-	// 	return
-	// }
+	token := middlewares.GetTokenFromHeader(c) // the token is already validated in the middleware
+	middlewares.InvalidateUserCache(token)
 
 	// Convert to private view
 	privateView := currentUser.ToPrivateView()
 
-	c.JSON(http.StatusOK, privateView)
+	c.JSON(http.StatusNoContent, privateView)
 }
 
 func DeleteUser(c *gin.Context) {
-	initializers.OpsProcessed.Inc() // Increment the counter for each request
-
 	id := c.Param("id")
-	currentUser := c.MustGet("user").(models.User)
+	currentUser := c.MustGet("user").(*models.User)
 
 	// Check if it's a valid UUID
 	userUuid, err := uuid.Parse(id)
@@ -191,12 +183,13 @@ func DeleteUser(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "User deleted successfully"})
+	token := middlewares.GetTokenFromHeader(c) // the token is already validated in the middleware
+	middlewares.InvalidateUserCache(token)
+
+	c.JSON(http.StatusNoContent, gin.H{"message": "User deleted successfully"})
 }
 
 func Signup(c *gin.Context) {
-	initializers.OpsProcessed.Inc() // Increment the counter for each request
-
 	var body struct {
 		Email    string `form:"email" binding:"required,email"`
 		Password string `form:"password" binding:"required,min=8"`
@@ -239,8 +232,6 @@ func Signup(c *gin.Context) {
 }
 
 func Login(c *gin.Context) {
-	initializers.OpsProcessed.Inc() // Increment the counter for each request
-
 	var body struct {
 		Email    string `form:"email" binding:"required,email"`
 		Password string `form:"password" binding:"required,min=8"`
@@ -276,8 +267,14 @@ func Login(c *gin.Context) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": existingUser.ID.String(),
-		"exp": time.Now().Add(config.TokenTTL).Unix(), // Token expires in 24 hours
+		"sub":       existingUser.ID.String(),
+		"exp":       time.Now().Add(config.TokenTTL).Unix(), // Token expires in 24 hours
+		"iat":       time.Now().Unix(),
+		"iss":       os.Getenv("TOKEN_ISSUER"),
+		"username":  existingUser.UserName,
+		"firstname": existingUser.FirstName,
+		"lastname":  existingUser.LastName,
+		"email":     existingUser.Email,
 	})
 
 	// Sign and get the complete encoded token as a string using the secret
@@ -293,52 +290,11 @@ func Login(c *gin.Context) {
 }
 
 func ResetPassword(c *gin.Context) {
-	initializers.OpsProcessed.Inc() // Increment the counter for each request
-
-	var body struct {
-		Email    string `form:"email" binding:"required"`
-		Password string `form:"password" binding:"required,min=8"`
-	}
-
-	if err := c.ShouldBindWith(&body, binding.Form); err != nil {
-		// Check if it's a validation error
-		if errs, ok := err.(validator.ValidationErrors); ok {
-			// Create a more descriptive error message
-			var errorMessages []string
-			for _, e := range errs {
-				errorMessages = append(errorMessages, fmt.Sprintf("%s is %s", e.Field(), e.Tag()))
-			}
-			c.JSON(http.StatusBadRequest, gin.H{"errors": errorMessages})
-			return
-		}
-		return
-	}
-
-	encryptedPassword, err := bcrypt.GenerateFromPassword([]byte(body.Password), 10)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
-		return
-	}
-
-	// Check if the user already exists
-	var existingUser models.User
-	if err := initializers.DB.First(&existingUser, "email = ?", body.Email).Error; err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
-		return
-	}
-
-	user := models.User{Email: body.Email, Password: string(encryptedPassword)}
-	if err := initializers.DB.Create(&user).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
-		return
-	}
-
-	c.JSON(http.StatusCreated, user.ToPrivateView())
+	// TODO: Implement password reset functionality
+	c.JSON(http.StatusNotImplemented, gin.H{"error": "Password reset not implemented"})
 }
 
 func GetMe(c *gin.Context) {
-	initializers.OpsProcessed.Inc() // Increment the counter for each request
-
-	user := c.MustGet("user").(models.User)
+	user := c.MustGet("user").(*models.User)
 	c.JSON(http.StatusCreated, user.ToPrivateView())
 }

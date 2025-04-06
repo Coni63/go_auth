@@ -20,6 +20,8 @@ func init() {
 func main() {
 	r := gin.Default()
 
+	r.Use(middlewares.PrometheusStatusCodeMiddleware())
+
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	r.GET("/users", controllers.GetAllUsers)
