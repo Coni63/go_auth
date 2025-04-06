@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
+	"go_auth/config"
 	"go_auth/initializers"
 	"go_auth/models"
 	"go_auth/serializers"
@@ -220,13 +222,13 @@ func Login(c *gin.Context) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub": existingUser.ID.String(),
-		"exp": time.Now().Add(time.Hour * 24).Unix(), // Token expires in 24 hours
+		"exp": time.Now().Add(config.TokenTTL).Unix(), // Token expires in 24 hours
 	})
 
 	// Sign and get the complete encoded token as a string using the secret
 	tokenString, err := token.SignedString([]byte(os.Getenv("TOKEN_SECRET_KEY")))
 	if err != nil {
-		println("Error signing token:", err)
+		log.Println("Error signing token:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
 	}

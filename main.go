@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"go_auth/controllers"
 	"go_auth/initializers"
 	"go_auth/middlewares"
@@ -12,14 +11,15 @@ import (
 )
 
 func init() {
-	fmt.Println("init")
 	initializers.LoadEnvVariables()
 	initializers.ConnectToDB()
 	initializers.SyncDatabase()
+	initializers.InitCache()
 }
 
 func main() {
 	r := gin.Default()
+
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	r.GET("/users", controllers.GetAllUsers)
