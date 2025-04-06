@@ -23,12 +23,12 @@ func main() {
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	r.GET("/users", controllers.GetAllUsers)
-	r.GET("/validate", middlewares.RequireAuth, controllers.Validate)
+	r.GET("/me", middlewares.RequireAuth, controllers.GetMe)
 
 	r.GET("/users/:id", controllers.GetUser)
-	r.PUT("/users/:id", controllers.PutUser)
-	r.PATCH("/users/:id", controllers.PatchUser)
-	r.DELETE("/users/:id", controllers.DeleteUser)
+	r.PUT("/users/:id", middlewares.RequireAuth, controllers.PutUser)
+	r.PATCH("/users/:id", middlewares.RequireAuth, controllers.PatchUser)
+	r.DELETE("/users/:id", middlewares.RequireAuth, controllers.DeleteUser)
 
 	r.POST("/signup", controllers.Signup)
 	r.POST("/login", controllers.Login)
