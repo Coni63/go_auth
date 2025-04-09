@@ -18,19 +18,19 @@ import (
 	"go_auth/initializers"
 	"go_auth/middlewares"
 	"go_auth/models"
-	"go_auth/serializers"
+	"go_auth/services"
 )
 
 func GetAllUsers(c *gin.Context) {
 	// First, query the actual User models from the database
-	var users []models.User
-	if err := initializers.DB.Find(&users).Error; err != nil {
+	users, err := services.GetAllUsers()
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch users"})
 		return
 	}
 
 	// Then convert to public view
-	publicUsers := []serializers.UserPublicView{}
+	publicUsers := []models.UserPublicView{}
 	for _, user := range users {
 		publicUsers = append(publicUsers, user.ToPublicView())
 	}
@@ -49,8 +49,8 @@ func GetUser(c *gin.Context) {
 	}
 
 	// Query the actual User model
-	var user models.User
-	if err := initializers.DB.First(&user, "id = ?", id).Error; err != nil {
+	user, err := services.GetUserById(id)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
